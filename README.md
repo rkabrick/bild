@@ -284,4 +284,5 @@ Feel free to modify and distribute.
 
 🔹 Maintained by **Me... poorly**  
 📧 Contact: `echo "<your grievance>" >> /dev/null`
+
 🔗 GitHub: [rkabrick/bild](https://github.com/rkabrick/bild)
