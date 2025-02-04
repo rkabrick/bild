@@ -1,4 +1,4 @@
-# bild
+# bild 🛠️
 
 _A simple CLI tool for managing build commands cause aint nobody rememberin all dat_
 
