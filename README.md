@@ -21,7 +21,7 @@ The tool supports:
 1. **Clone the repository**
 
    ```sh
-   git clone https://github.com/yourusername/bild.git
+   git clone https://github.com/rkabrick/bild.git
    cd bild
    ```
 
