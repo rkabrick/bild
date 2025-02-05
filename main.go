@@ -10,6 +10,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+  "github.com/alecthomas/chroma"
+  "github.com/alecthomas/chroma/formatters"
+  "github.com/alecthomas/chroma/lexers"
+  "github.com/alecthomas/chroma/styles"
 )
 
 // Global variable to hold the configuration file path (set via --config flag).
@@ -110,15 +114,15 @@ func getGitRepoName() (string, error) {
 }
 
 // openEditor opens the user's preferred editor (from $EDITOR, defaulting to "vi")
-// on a temporary file with a .sh extension (for syntax highlighting) and returns its contents.
+// on a temporary file with a .md extension (for syntax highlighting) and returns its contents.
 func openEditor(initialContent string) (string, error) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
 	}
 
-	// Create a temporary file with a .sh extension.
-	tmpFile, err := ioutil.TempFile("", "bild_edit_*.sh")
+	// Create a temporary file with .md extension for Markdown highlighting
+	tmpFile, err := ioutil.TempFile("", "bild_edit_*.md")
 	if err != nil {
 		return "", err
 	}
@@ -147,6 +151,182 @@ func openEditor(initialContent string) (string, error) {
 	return string(content), nil
 }
 
+// editEntireProject using Markdown format
+func editEntireProject(projectName string, config *Config) error {
+	// Get or create the project configuration
+	proj, exists := config.Projects[projectName]
+	if !exists {
+		proj = ProjectConfig{Phases: []Phase{}}
+	}
+
+	// Build the initial content in Markdown format
+	var initialContent strings.Builder
+	
+	// Project header
+	initialContent.WriteString("# Project: " + projectName + "\n\n")
+	
+	// Instructions
+	initialContent.WriteString("Edit commands for each phase below. Instructions:\n")
+	initialContent.WriteString("- Order of phases here determines execution order\n")
+	initialContent.WriteString("- Commands must be inside ``` blocks\n")
+	initialContent.WriteString("- Each phase must be a level 2 heading (##)\n\n")
+
+	// Add existing phases
+	for _, phase := range proj.Phases {
+		initialContent.WriteString("## " + phase.Name + "\n\n")
+		initialContent.WriteString("```bash\n")
+		for i, cmd := range phase.Commands {
+			initialContent.WriteString(cmd)
+			if i < len(phase.Commands)-1 {
+				initialContent.WriteString("\n")
+			}
+		}
+		initialContent.WriteString("\n```\n\n")
+	}
+
+	// Open editor
+	editedContent, err := openEditor(initialContent.String())
+	if err != nil {
+		return err
+	}
+
+	// Parse the edited content
+	var newPhases []Phase
+	var currentPhase *Phase
+	var inCodeBlock bool
+	var codeLines []string
+
+	lines := strings.Split(editedContent, "\n")
+	
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Skip empty lines and the project header
+		if trimmed == "" || strings.HasPrefix(trimmed, "# Project:") || 
+		   strings.HasPrefix(trimmed, "Edit commands") || strings.HasPrefix(trimmed, "-") {
+			continue
+		}
+
+		// Check for phase headers (##)
+		if strings.HasPrefix(trimmed, "## ") {
+			// If we were building a phase, finalize it
+			if currentPhase != nil && len(codeLines) > 0 {
+				currentPhase.Commands = codeLines
+				newPhases = append(newPhases, *currentPhase)
+			}
+			
+			// Start a new phase
+			phaseName := strings.TrimSpace(trimmed[3:])
+			currentPhase = &Phase{
+				Name:     phaseName,
+				Commands: []string{},
+			}
+			codeLines = nil
+			inCodeBlock = false
+			continue
+		}
+
+		// Handle code blocks
+		if trimmed == "```" || trimmed == "```bash" {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+
+		// Collect commands inside code blocks
+		if inCodeBlock && currentPhase != nil && trimmed != "" {
+			codeLines = append(codeLines, trimmed)
+		}
+	}
+
+	// Add the last phase if it exists
+	if currentPhase != nil && len(codeLines) > 0 {
+		currentPhase.Commands = codeLines
+		newPhases = append(newPhases, *currentPhase)
+	}
+
+	// Update the project with the new phases
+	proj.Phases = newPhases
+	config.Projects[projectName] = proj
+
+	// Save the configuration
+	if err := saveConfig(config); err != nil {
+		return fmt.Errorf("error saving config: %v", err)
+	}
+
+	fmt.Printf("Project %s updated with %d phase(s).\n", projectName, len(newPhases))
+	for _, phase := range newPhases {
+		fmt.Printf("  Phase %s: %d command(s)\n", phase.Name, len(phase.Commands))
+	}
+	
+	return nil
+}
+
+// dumpProjectConfig dumps a project's configuration to the local .bild.json file
+func dumpProjectConfig(projectName string, config *Config) error {
+	// Verify project exists
+	proj, exists := config.Projects[projectName]
+	if !exists {
+		return fmt.Errorf("project %s not found", projectName)
+	}
+
+	// Get git repository root
+	gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	output, err := gitCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get git repository root: %v", err)
+	}
+	repoRoot := strings.TrimSpace(string(output))
+
+	// Create local config with just this project
+	localConfig := map[string]ProjectConfig{
+		projectName: proj,
+	}
+
+	// Marshal the config with proper indentation
+	data, err := json.MarshalIndent(localConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %v", err)
+	}
+
+	// Write to file
+	localConfigPath := filepath.Join(repoRoot, ".bild.json")
+	if err := os.WriteFile(localConfigPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config: %v", err)
+	}
+
+	fmt.Printf("Successfully dumped configuration for project '%s' to %s\n", projectName, localConfigPath)
+	return nil
+}
+
+// highlightCommand returns a syntax-highlighted version of the command
+func highlightCommand(command string) string {
+    lexer := lexers.Get("bash")
+    if lexer == nil {
+        lexer = lexers.Fallback
+    }
+    style := styles.Get("monokai")
+    if style == nil {
+        style = styles.Fallback
+    }
+    formatter := formatters.Get("terminal")
+    if formatter == nil {
+        formatter = formatters.Fallback
+    }
+
+    iterator, err := lexer.Tokenise(nil, command)
+    if err != nil {
+        return command // Return original if highlighting fails
+    }
+
+    var buf strings.Builder
+    err = formatter.Format(&buf, style, iterator)
+    if err != nil {
+        return command // Return original if formatting fails
+    }
+
+    return buf.String()
+}
+
 // runProject executes the commands for a project.
 // If phaseName is empty, all phases are run in order.
 // Otherwise, only the specified phase is executed.
@@ -164,53 +344,55 @@ func runProject(projectName string, phaseName string, config *Config) error {
 		fmt.Println("Not a git repository; running in current directory.")
 	}
 
-	proj, ok := config.Projects[projectName]
-	if !ok {
-		return fmt.Errorf("project %s not found", projectName)
-	}
+      // If no phase is specified, run all phases
+    if phaseName == "" {
+        for _, ph := range proj.Phases {
+            fmt.Printf("\n📦 Running phase: %s\n", ph.Name)
+            for _, commandLine := range ph.Commands {
+                // Highlight and show the command
+                highlighted := highlightCommand(commandLine)
+                fmt.Printf("$ %s\n", highlighted)
+                
+                cmd := exec.Command("sh", "-c", commandLine)
+                cmd.Stdout = os.Stdout
+                cmd.Stderr = os.Stderr
+                cmd.Stdin = os.Stdin
+                if err := cmd.Run(); err != nil {
+                    return fmt.Errorf("command failed in phase %s: %s, error: %v", ph.Name, commandLine, err)
+                }
+            }
+        }
+        return nil
+    }
 
-	// If no phase is specified, run all phases.
-	if phaseName == "" {
-		for _, ph := range proj.Phases {
-			fmt.Printf("Running phase: %s\n", ph.Name)
-			for _, commandLine := range ph.Commands {
-				fmt.Printf("Running: %s\n", commandLine)
-				cmd := exec.Command("sh", "-c", commandLine)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				cmd.Stdin = os.Stdin
-				if err := cmd.Run(); err != nil {
-					return fmt.Errorf("command failed in phase %s: %s, error: %v", ph.Name, commandLine, err)
-				}
-			}
-		}
-		return nil
-	}
-
-	// Otherwise, run only the specified phase.
-	var found bool
-	for _, ph := range proj.Phases {
-		if ph.Name == phaseName {
-			found = true
-			fmt.Printf("Running phase: %s\n", phaseName)
-			for _, commandLine := range ph.Commands {
-				fmt.Printf("Running: %s\n", commandLine)
-				cmd := exec.Command("sh", "-c", commandLine)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				cmd.Stdin = os.Stdin
-				if err := cmd.Run(); err != nil {
-					return fmt.Errorf("command failed in phase %s: %s, error: %v", phaseName, commandLine, err)
-				}
-			}
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("phase %s not found for project %s", phaseName, projectName)
-	}
-	return nil
+    // Run specific phase
+    var found bool
+    for _, ph := range proj.Phases {
+        if ph.Name == phaseName {
+            found = true
+            fmt.Printf("\n📦 Running phase: %s\n", phaseName)
+            for _, commandLine := range ph.Commands {
+                // Highlight and show the command
+                highlighted := highlightCommand(commandLine)
+                fmt.Printf("$ %s\n", highlighted)
+                
+                cmd := exec.Command("sh", "-c", commandLine)
+                cmd.Stdout = os.Stdout
+                cmd.Stderr = os.Stderr
+                cmd.Stdin = os.Stdin
+                if err := cmd.Run(); err != nil {
+                    return fmt.Errorf("command failed in phase %s: %s, error: %v", phaseName, commandLine, err)
+                }
+            }
+            break
+        }
+    }
+    if !found {
+        return fmt.Errorf("phase %s not found for project %s", phaseName, projectName)
+    }
+    return nil
 }
+
 
 // editProjectPhase opens the editor to modify the commands for a given phase of a project.
 // If the project or phase does not exist, they are created.
@@ -350,39 +532,77 @@ var runCmd = &cobra.Command{
 	},
 }
 
-// editCmd opens the editor to modify the build commands for a specific phase of a project.
+
+// Modify the editCmd to handle both full project and single phase editing
 // If no phase is provided, it defaults to the "build" phase.
 var editCmd = &cobra.Command{
 	Use:   "edit [project] [phase]",
-	Short: "Edit build commands for a specific phase of a project (default phase: build)",
-	Long:  "Opens your preferred editor to modify the build commands for the specified phase of a project. If no phase is provided, the 'build' phase is assumed.",
-	Args:  cobra.RangeArgs(1, 2),
+	Short: "Edit build commands for a project",
+	Long: `Opens your preferred editor to modify build commands.
+If only a project name is provided, allows editing and reordering all phases.
+If both project and phase are provided, edits only that specific phase.`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		projectName := args[0]
-		phaseName := "build"
-		if len(args) == 2 {
-			phaseName = args[1]
-		}
 		config, err := loadConfig()
 		if err != nil {
 			return fmt.Errorf("error loading config: %v", err)
 		}
+
+		if len(args) == 1 {
+			// Edit entire project with phase reordering
+			return editEntireProject(projectName, config)
+		}
+
+		// Edit specific phase (existing behavior)
+		phaseName := args[1]
 		return editProjectPhase(projectName, phaseName, config)
 	},
 }
 
-// listCmd displays all projects along with their phases.
-var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all projects and their build phases",
-	Long:  "Displays a list of all projects along with their defined build phases and the number of commands in each phase.",
+// Modify the listProjects function to use highlighting
+func listProjects(config *Config) {
+    if len(config.Projects) == 0 {
+        fmt.Println("No projects registered.")
+        return
+    }
+    
+    fmt.Println("📋 Registered projects:")
+    for projName, projConfig := range config.Projects {
+        fmt.Printf("\n🔷 Project: %s\n", projName)
+        if len(projConfig.Phases) == 0 {
+            fmt.Println("  No phases defined.")
+        } else {
+            for _, ph := range projConfig.Phases {
+                fmt.Printf("  📎 Phase: %s (%d command%s)\n", 
+                    ph.Name, 
+                    len(ph.Commands), 
+                    map[bool]string{true: "", false: "s"}[len(ph.Commands) == 1],
+                )
+                
+                // Show highlighted commands
+                for _, cmd := range ph.Commands {
+                    highlighted := highlightCommand(cmd)
+                    fmt.Printf("      $ %s\n", highlighted)
+                }
+            }
+        }
+    }
+}
+
+// dumpCmd dumps a project's configuration to .bild.json in the git repository root
+var dumpCmd = &cobra.Command{
+	Use:   "dump [project]",
+	Short: "Dump a project's configuration to local .bild.json",
+	Long:  "Exports a project's configuration to .bild.json in the git repository root",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		projectName := args[0]
 		config, err := loadConfig()
 		if err != nil {
 			return fmt.Errorf("error loading config: %v", err)
 		}
-		listProjects(config)
-		return nil
+		return dumpProjectConfig(projectName, config)
 	},
 }
 
@@ -391,6 +611,7 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(editCmd)
 	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(dumpCmd)
 }
 
 func main() {

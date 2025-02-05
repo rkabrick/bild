@@ -1,7 +1,5 @@
 # 🛠️ bild 🛠️
 
-_A simple CLI tool for managing build commands cause aint nobody rememberin all dat_
-
 ## Overview
 
 **bild** is a command-line tool that helps manage and execute build commands for projects. It allows users to define **explicit build phases** such as `configure`, `build`, and `test`, and run them in a structured manner.
@@ -13,6 +11,7 @@ The tool supports:
 - ✅ **Execution of all phases in order** (or a specific phase if needed - order: configure -> build -> test)
 - ✅ **Easy command editing** using the `$EDITOR` environment variable
 - ✅ **Configuration persistence** in `~/.config/bild/bild.json`
+- ✅ **Local project configuration** via `.bild.json` in repository root
 
 ---
 
@@ -48,13 +47,18 @@ The tool supports:
 
 ## Configuration
 
-By default, **bild** stores project build configurations in:
+**bild** supports two levels of configuration:
 
-```
-~/.config/bild/bild.json
-```
+1. **Global configuration** (default: `~/.config/bild/bild.json`)
+2. **Local repository configuration** (`.bild.json` in repository root)
 
-This file contains a list of projects, each with named **phases**, and their associated shell commands.
+### Global Configuration
+
+The global configuration file contains all registered projects and their build phases.
+
+### Local Configuration
+
+You can dump a project's configuration to a local `.bild.json` file in your repository root, making it portable and version-controllable. Also (more importantly) you can just run `bild` and it will run all the phases for you based on that configuration.
 
 ### Example Configuration
 
@@ -83,7 +87,7 @@ This file contains a list of projects, each with named **phases**, and their ass
 }
 ```
 
-You can override this default file location using:
+You can override the global config location using:
 
 ```sh
 bild --config /path/to/custom_config.json
@@ -148,13 +152,25 @@ bild --config /path/to/custom_config.json
     Phase: test (1 command)
   ```
 
-### 4. Managing Configuration Files
+### 4. Managing Project Configuration
 
 - **Set a custom configuration file**:
 
   ```sh
   bild --config /path/to/my_config.json edit my_project
   ```
+
+- **Dump project configuration to repository**:
+
+  ```sh
+  bild dump my_project
+  ```
+
+  This creates a `.bild.json` file in your repository root containing the project's configuration, making it:
+
+  - 📦 Portable (share with your team)
+  - 🔒 Version-controllable (track changes)
+  - 🚀 Easy to set up (clone and go)
 
 ---
 
@@ -209,6 +225,25 @@ This will run:
 bild run my_cpp_project test
 ```
 
+### Share Project Configuration
+
+To share your project configuration with your team:
+
+1. **Dump the configuration**:
+
+   ```sh
+   bild dump my_cpp_project
+   ```
+
+2. **Commit the `.bild.json` file**:
+
+   ```sh
+   git add .bild.json
+   git commit -m "Add bild configuration"
+   ```
+
+Now your teammates can clone the repo and use `bild` immediately! (So long as they use my stupid tool too!)
+
 ---
 
 ## Features
@@ -227,7 +262,8 @@ bild run my_cpp_project test
 
 ✅ **Persistent Configuration**
 
-- Stores build commands in `~/.config/bild/bild.json`.
+- Global config in `~/.config/bild/bild.json`
+- Local config in repository's `.bild.json`
 
 ✅ **Easy Editing via `$EDITOR`**
 
@@ -236,6 +272,7 @@ bild run my_cpp_project test
 ✅ **Portable & Lightweight**
 
 - Quite literally a digital feather
+- Now with shareable project configs cause README's we're just too damn hard for this procrastinator 🎉
 
 ---
 
