@@ -12,6 +12,7 @@ The tool supports:
 - ✅ **Easy command editing** using the `$EDITOR` environment variable
 - ✅ **Configuration persistence** in `~/.config/bild/bild.json`
 - ✅ **Local project configuration** via `.bild.json` in repository root
+- ✅ **Syntax highlighted commands** cause looking at plain text is for weenies
 
 ---
 
@@ -121,15 +122,43 @@ bild --config /path/to/custom_config.json
 
 ### 2. Editing Build Commands
 
-- **Edit the `build` phase** (default if no phase is provided):
+- **Edit all phases for a project**:
 
   ```sh
   bild edit my_project
   ```
 
-  This opens a temporary `.sh` file in `$EDITOR`, allowing easy modifications.
+  This opens a temporary `.md` file in `$EDITOR` with full Markdown support. You'll see something like:
 
-- **Edit a specific phase (e.g., `configure`)**:
+  ````markdown
+  # Project: my_project
+
+  Edit commands for each phase below. Instructions:
+
+  - Order of phases here determines execution order
+  - Commands must be inside ``` blocks
+  - Each phase must be a level 2 heading (##)
+
+  ## configure
+
+  ```bash
+  cmake ../ -DCMAKE_EXPORT_BUILD_COMMANDS=On -DCMAKE_BUILD_TYPE=RelWithDebInfo -GNinja
+  ```
+  ````
+
+  ## build
+
+  ```bash
+  ninja -j4
+  ```
+
+  ```
+
+  The order of phases in this file determines their execution order. Move them around to change the sequence!
+
+  ```
+
+- **Edit a specific phase**:
 
   ```sh
   bild edit my_project configure
